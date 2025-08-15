@@ -1,4 +1,5 @@
 #include <stdlib.h> 
+#include <math.h> 
 #include <stdio.h> 
 #include "raylib.h"
 
@@ -8,19 +9,24 @@ typedef enum {
 	STATE_DEAD
 } Scene;
 
-typedef struct {
-	int selectedOption;
-	int optionCount;
-	char **options;
-} MenuData;
-
 typedef struct {	
+	float delta;
+
 	int screenWidth;
 	int screenHeight;
 	Scene scene;
 	Scene nextScene;
 	void *sceneData;
 } GameState;
+
+void exitGame(GameState *state) {
+	if (state->sceneData != NULL) {
+		free(state->sceneData);
+		state->sceneData = NULL;
+	}
+
+	CloseWindow();
+}
 
 void setSceneData(GameState *state, void* data) {
 	if (state->sceneData != NULL) {
@@ -34,49 +40,44 @@ void switchScene(GameState *state, Scene newScene) {
 	state->nextScene = newScene; 
 }
 
-MenuData* getDefaultMenuData(GameState *state) {
-		MenuData *data = malloc(sizeof(MenuData));
+
+typedef struct {
+	int selectedOption;
+	int optionCount;
+	char **options;
+} MenuData;
+
+MenuData* getMenuData(GameState *state) {
+	MenuData *data = (MenuData*)state->sceneData;
+	if (data == NULL) {
+		data = malloc(sizeof(MenuData));
 		data->selectedOption = 0;
 		data->optionCount = 2;
 		data->options = malloc(data->optionCount * sizeof(char*));
 
 		data->options[0] = "Play";
 		data->options[1] = "Quit";
-
-		return data;
+		state->sceneData = data;
+	}
+	return data;
 }
 
 void updateMenu(GameState *state) {
-	MenuData *data = (MenuData *)state->sceneData;
-	if (data == NULL) {
-		printf("update");
-		data = getDefaultMenuData(state);
-		state->sceneData = data;
-	}
-
+	MenuData *data = getMenuData(state);
+	
 	if (IsKeyPressed(KEY_DOWN)) {
 		data->selectedOption = (data->selectedOption+1)%data->optionCount;
 	} else if (IsKeyPressed(KEY_UP)) {
 		data->selectedOption = (data->selectedOption-1+data->optionCount)%data->optionCount;
 	} else if (IsKeyPressed(KEY_C)) {
-		switchScene(state, STATE_PLAYING);
-	}
-}
-
-void updatePlaying(GameState *state) {}
-void updateDead(GameState *state) {}
-
-void updateGame(GameState *state) {
-	switch (state->scene) {
-		case STATE_MENU:
-			updateMenu(state);
-			break;
-		case STATE_PLAYING:
-			updatePlaying(state);
-			break;
-		case STATE_DEAD:
-			updateDead(state);
-			break;
+		switch (data->selectedOption) {
+			case 0:
+				switchScene(state, STATE_PLAYING);
+				break;
+			case 1:
+				exitGame(state);
+				break;
+		}
 	}
 }
 
@@ -88,12 +89,7 @@ void drawMenu(GameState *state) {
 	const int titleWidth = MeasureText(title, titleFontSize);
 	DrawText(title, state->screenWidth/2-titleWidth/2, (float)state->screenHeight*0.4, titleFontSize, GRAY);
 
-	MenuData *data = (MenuData *)state->sceneData;
-
-	if (data == NULL) {
-		data = getDefaultMenuData(state);
-		state->sceneData = data;
-	}
+	MenuData *data = getMenuData(state);
 
 	const int optionFontSize = 16;
 
@@ -110,9 +106,93 @@ void drawMenu(GameState *state) {
 
 }
 
+const int PADDLE_WIDTH = 96;
+const int PADDLE_HEIGHT = 24;
+const int PADDLE_SPEED = 200;
+const int PADDLE_Y_OFFSET = 16;
+const int BALL_RADIUS = 12;
+const int BALL_SPEED = 300;
+
+typedef struct {
+	bool hasStarted;
+	float paddleX;
+	Vector2 ballPos;
+	Vector2 ballVel;
+} PlayingData;
+
+PlayingData* getPlayingData(GameState *state) {
+	PlayingData* data = (PlayingData*)state->sceneData;
+	if (data == NULL) {
+		data = malloc(sizeof(PlayingData));
+		data->hasStarted = false;
+
+		data->paddleX = (float)state->screenWidth/2-(float)PADDLE_WIDTH/2;
+
+		data->ballPos.x = (float)state->screenWidth/2;
+		data->ballPos.y = state->screenHeight-PADDLE_Y_OFFSET-PADDLE_HEIGHT-BALL_RADIUS-4;
+
+		data->ballVel.x = 0;
+		data->ballVel.y = 1;
+
+		state->sceneData = data;
+	}
+
+	return data;
+}
+
+void updatePlaying(GameState *state) {
+	PlayingData* data = getPlayingData(state);
+
+	if (!data->hasStarted) {
+		if (IsKeyPressed(KEY_SPACE)) data->hasStarted = true;
+		return;
+	}
+
+	int movement_vector = 0;
+	if (IsKeyDown(KEY_LEFT))  movement_vector-=1;
+	if (IsKeyDown(KEY_RIGHT))  movement_vector+=1;
+
+	float movement = movement_vector * PADDLE_SPEED * state->delta;
+	data->paddleX += movement;
+
+	const int LEFT_BOUNDARY = 8;
+	const int RIGHT_BOUNDARY = state->screenWidth-PADDLE_WIDTH-8;
+	if (data->paddleX < LEFT_BOUNDARY)  data->paddleX = LEFT_BOUNDARY;
+	if (data->paddleX > RIGHT_BOUNDARY) data->paddleX = RIGHT_BOUNDARY;
+
+
+	data->ballPos.x += data->ballVel.x * BALL_SPEED * state->delta;
+	data->ballPos.y += data->ballVel.y * BALL_SPEED * state->delta;
+}
+
 void drawPlaying(GameState *state) {
 	ClearBackground(RAYWHITE);
-	DrawText("Game", 0, 0, 32, GRAY);
+
+	PlayingData* data = getPlayingData(state);
+
+	DrawRectangle(
+		data->paddleX, state->screenHeight-16-PADDLE_HEIGHT,
+		PADDLE_WIDTH, PADDLE_HEIGHT, GRAY
+	);
+
+	DrawEllipse(data->ballPos.x, data->ballPos.y, BALL_RADIUS, BALL_RADIUS, LIGHTGRAY);
+}
+
+
+void updateDead(GameState *state) {}
+
+void updateGame(GameState *state) {
+	switch (state->scene) {
+		case STATE_MENU:
+			updateMenu(state);
+			break;
+		case STATE_PLAYING:
+			updatePlaying(state);
+			break;
+		case STATE_DEAD:
+			updateDead(state);
+			break;
+	}
 }
 
 void drawDead(GameState *state) {
@@ -149,6 +229,7 @@ int main() {
 	SetTargetFPS(60);
 
 	while (!WindowShouldClose()) {
+		state.delta = GetFrameTime();
 		updateGame(&state);
 		drawGame(&state);
 
