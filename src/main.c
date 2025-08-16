@@ -112,7 +112,10 @@ void playingUpdate(Game *game) {
 	PlayingData *data = game->currentState->data;
 
 	if (!data->hasStarted) {
-		if (IsKeyPressed(KEY_C)) { data->hasStarted = true; }
+		if (IsKeyPressed(KEY_C)) {
+			data->hasStarted = true;
+			data->ballVel = (Vector2){ 1, 1 };
+		}
 		else { return; }
 	}
 
@@ -126,6 +129,27 @@ void playingUpdate(Game *game) {
 	const int RIGHT_LIMIT = game->width-8-PADDLE_WIDTH;
 	if (data->paddleX < LEFT_LIMIT)  data->paddleX = LEFT_LIMIT;
 	if (data->paddleX > RIGHT_LIMIT) data->paddleX = RIGHT_LIMIT; 
+
+	data->ballPos.x += data->ballVel.x * BALL_SPEED * game->delta;
+	data->ballPos.y += data->ballVel.y * BALL_SPEED * game->delta;
+
+	if (data->ballPos.x < BALL_RADIUS) {
+		data->ballPos.x = BALL_RADIUS;
+		data->ballVel.x*=-1;
+	}
+	else if (data->ballPos.x > game->width-BALL_RADIUS) {
+		data->ballPos.x = game->width-BALL_RADIUS;
+		data->ballVel.x*=-1;
+	}
+
+	if (data->ballPos.y < BALL_RADIUS) {
+		data->ballPos.y = BALL_RADIUS;
+		data->ballVel.y*=-1;
+	}
+	else if (data->ballPos.y > game->height-BALL_RADIUS) {
+		data->ballPos.y = game->height-BALL_RADIUS;
+		data->ballVel.y*=-1;
+	}
 }
 
 void playingDraw(Game *game) {
