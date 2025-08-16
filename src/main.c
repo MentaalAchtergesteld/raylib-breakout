@@ -1,117 +1,30 @@
-#include <stdlib.h> 
-#include <math.h> 
-#include <stdio.h> 
-#include "raylib.h"
+#include <raylib.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 typedef enum {
 	STATE_MENU,
 	STATE_PLAYING,
-	STATE_DEAD
-} Scene;
+	STATE_DEAD,
+	STATE_COUNT
+} StateType;
 
-typedef struct {	
-	float delta;
+struct Game;
 
-	int screenWidth;
-	int screenHeight;
-	Scene scene;
-	Scene nextScene;
-	void *sceneData;
-} GameState;
-
-void exitGame(GameState *state) {
-	if (state->sceneData != NULL) {
-		free(state->sceneData);
-		state->sceneData = NULL;
-	}
-
-	CloseWindow();
-}
-
-void setSceneData(GameState *state, void* data) {
-	if (state->sceneData != NULL) {
-		free(state->sceneData);
-		state->sceneData = NULL;
-	}
-	state->sceneData = data;
-}
-
-void switchScene(GameState *state, Scene newScene) {
-	state->nextScene = newScene; 
-}
-
+typedef struct {
+	StateType type;
+	void (*entry)  (struct Game *game);
+	void (*exit)   (struct Game *game);
+	void (*update) (struct Game *game);
+	void (*draw)   (struct Game *game);
+	void *data;
+} State;
 
 typedef struct {
 	int selectedOption;
 	int optionCount;
-	char **options;
+	const char **options;
 } MenuData;
-
-MenuData* getMenuData(GameState *state) {
-	MenuData *data = (MenuData*)state->sceneData;
-	if (data == NULL) {
-		data = malloc(sizeof(MenuData));
-		data->selectedOption = 0;
-		data->optionCount = 2;
-		data->options = malloc(data->optionCount * sizeof(char*));
-
-		data->options[0] = "Play";
-		data->options[1] = "Quit";
-		state->sceneData = data;
-	}
-	return data;
-}
-
-void updateMenu(GameState *state) {
-	MenuData *data = getMenuData(state);
-	
-	if (IsKeyPressed(KEY_DOWN)) {
-		data->selectedOption = (data->selectedOption+1)%data->optionCount;
-	} else if (IsKeyPressed(KEY_UP)) {
-		data->selectedOption = (data->selectedOption-1+data->optionCount)%data->optionCount;
-	} else if (IsKeyPressed(KEY_C)) {
-		switch (data->selectedOption) {
-			case 0:
-				switchScene(state, STATE_PLAYING);
-				break;
-			case 1:
-				exitGame(state);
-				break;
-		}
-	}
-}
-
-void drawMenu(GameState *state) {
-	ClearBackground(RAYWHITE);
-
-	const char *title = "Breakout";
-	const int titleFontSize = 32;
-	const int titleWidth = MeasureText(title, titleFontSize);
-	DrawText(title, state->screenWidth/2-titleWidth/2, (float)state->screenHeight*0.4, titleFontSize, GRAY);
-
-	MenuData *data = getMenuData(state);
-
-	const int optionFontSize = 16;
-
-	for (int i = 0; i < data->optionCount; i++) {
-		const int optionWidth = MeasureText(data->options[i], optionFontSize);
-		const float x = (float)state->screenWidth/2 - (float)optionWidth/2;
-		const float y = (float)state->screenHeight/2 + (float)optionFontSize*1.5 * i;
-		DrawText(data->options[i], x, y, optionFontSize, LIGHTGRAY);
-
-		if (data->selectedOption == i) {
-			DrawRectangle(x-4, y+optionFontSize+3, optionWidth+8, 1, LIGHTGRAY);
-		}
-	}
-
-}
-
-const int PADDLE_WIDTH = 96;
-const int PADDLE_HEIGHT = 24;
-const int PADDLE_SPEED = 200;
-const int PADDLE_Y_OFFSET = 16;
-const int BALL_RADIUS = 12;
-const int BALL_SPEED = 300;
 
 typedef struct {
 	bool hasStarted;
@@ -120,125 +33,173 @@ typedef struct {
 	Vector2 ballVel;
 } PlayingData;
 
-PlayingData* getPlayingData(GameState *state) {
-	PlayingData* data = (PlayingData*)state->sceneData;
-	if (data == NULL) {
-		data = malloc(sizeof(PlayingData));
-		data->hasStarted = false;
+typedef struct {
 
-		data->paddleX = (float)state->screenWidth/2-(float)PADDLE_WIDTH/2;
+} DeadData;
 
-		data->ballPos.x = (float)state->screenWidth/2;
-		data->ballPos.y = state->screenHeight-PADDLE_Y_OFFSET-PADDLE_HEIGHT-BALL_RADIUS-4;
+typedef struct Game {
+	int width;
+	int height;
 
-		data->ballVel.x = 0;
-		data->ballVel.y = 1;
+	float delta;
 
-		state->sceneData = data;
+	State* states[STATE_COUNT];
+	State* currentState;
+
+	StateType nextState;
+} Game;
+
+void menuEntry(Game *game) {}
+void menuExit(Game *game) {}
+void menuUpdate(Game *game) {
+	MenuData *data = (MenuData*)game->currentState->data;
+	if (IsKeyPressed(KEY_DOWN)) {
+		data->selectedOption = (data->selectedOption+1)%data->optionCount;
+	} else if (IsKeyPressed(KEY_UP)) {
+		data->selectedOption = (data->selectedOption-1+data->optionCount)%data->optionCount;
+	} else if (IsKeyPressed(KEY_C)) {
+		switch (data->selectedOption) {
+			case 0:
+				game->nextState=STATE_PLAYING;
+				break;
+			case 1:
+				exit(0);
+		}
 	}
-
-	return data;
 }
 
-void updatePlaying(GameState *state) {
-	PlayingData* data = getPlayingData(state);
-
-	if (!data->hasStarted) {
-		if (IsKeyPressed(KEY_SPACE)) data->hasStarted = true;
-		return;
-	}
-
-	int movement_vector = 0;
-	if (IsKeyDown(KEY_LEFT))  movement_vector-=1;
-	if (IsKeyDown(KEY_RIGHT))  movement_vector+=1;
-
-	float movement = movement_vector * PADDLE_SPEED * state->delta;
-	data->paddleX += movement;
-
-	const int LEFT_BOUNDARY = 8;
-	const int RIGHT_BOUNDARY = state->screenWidth-PADDLE_WIDTH-8;
-	if (data->paddleX < LEFT_BOUNDARY)  data->paddleX = LEFT_BOUNDARY;
-	if (data->paddleX > RIGHT_BOUNDARY) data->paddleX = RIGHT_BOUNDARY;
-
-
-	data->ballPos.x += data->ballVel.x * BALL_SPEED * state->delta;
-	data->ballPos.y += data->ballVel.y * BALL_SPEED * state->delta;
-}
-
-void drawPlaying(GameState *state) {
+void menuDraw(Game *game) {
 	ClearBackground(RAYWHITE);
 
-	PlayingData* data = getPlayingData(state);
+	const char *title = "Breakout";
+	const int titleFontSize = 32;
+	const int titleWidth = MeasureText(title, titleFontSize);
+	DrawText(title, game->width/2-titleWidth/2, game->height*0.4, titleFontSize, GRAY);
 
-	DrawRectangle(
-		data->paddleX, state->screenHeight-16-PADDLE_HEIGHT,
-		PADDLE_WIDTH, PADDLE_HEIGHT, GRAY
-	);
+	MenuData *data = (MenuData*)game->currentState->data;
+
+	const int optionFontSize = 16;
+
+	for (int i = 0; i < data->optionCount; i++) {
+		const int optionWidth = MeasureText(data->options[i], optionFontSize);
+		const float x = game->width/2. - optionWidth/2.;
+		const float y = game->height/2. + optionFontSize*1.5 * i;
+		DrawText(data->options[i], x, y, optionFontSize, LIGHTGRAY);
+
+		if (data->selectedOption == i) {
+			DrawRectangle(x-4, y+optionFontSize+3, optionWidth+8, 1, LIGHTGRAY);
+		}
+	}
+}
+
+const int PADDLE_WIDTH = 96;
+const int PADDLE_HEIGHT = 16;
+const int PADDLE_SPEED = 200;
+const int PADDLE_Y_OFFSET = 16;
+const int BALL_RADIUS = 8;
+const int BALL_SPEED = 300;
+
+void playingEntry(Game *game) {
+	PlayingData *data = game->currentState->data;
+	data->hasStarted = false;
+	data->paddleX = game->width/2. - PADDLE_WIDTH/2.;
+	data->ballVel = (Vector2){ 0, 0 };
+	data->ballPos = (Vector2){ game->width/2., game->height - PADDLE_Y_OFFSET - PADDLE_HEIGHT - BALL_RADIUS - 4 };
+}
+void playingExit(Game *game) {}
+
+void playingUpdate(Game *game) {
+	PlayingData *data = game->currentState->data;
+
+	if (!data->hasStarted) {
+		if (IsKeyPressed(KEY_C)) { data->hasStarted = true; }
+		else { return; }
+	}
+
+	int movement = 0;
+	if (IsKeyDown(KEY_LEFT))  movement -= 1;
+	if (IsKeyDown(KEY_RIGHT)) movement += 1;
+
+	data->paddleX += movement * PADDLE_SPEED * game->delta;
+
+	const int LEFT_LIMIT  = 8;
+	const int RIGHT_LIMIT = game->width-8-PADDLE_WIDTH;
+	if (data->paddleX < LEFT_LIMIT)  data->paddleX = LEFT_LIMIT;
+	if (data->paddleX > RIGHT_LIMIT) data->paddleX = RIGHT_LIMIT; 
+}
+
+void playingDraw(Game *game) {
+	ClearBackground(RAYWHITE);
+
+	PlayingData *data = game->currentState->data;
+
+	DrawRectangle(data->paddleX, game->height-PADDLE_Y_OFFSET-PADDLE_HEIGHT, PADDLE_WIDTH, PADDLE_HEIGHT, GRAY);
 
 	DrawEllipse(data->ballPos.x, data->ballPos.y, BALL_RADIUS, BALL_RADIUS, LIGHTGRAY);
 }
 
+void deadEntry(Game *game) {}
+void deadExit(Game *game) {}
+void deadUpdate(Game *game) {}
+void deadDraw(Game *game) {}
 
-void updateDead(GameState *state) {}
-
-void updateGame(GameState *state) {
-	switch (state->scene) {
-		case STATE_MENU:
-			updateMenu(state);
-			break;
-		case STATE_PLAYING:
-			updatePlaying(state);
-			break;
-		case STATE_DEAD:
-			updateDead(state);
-			break;
+void changeState(Game *game, StateType newState) {
+	if (game->currentState && game->currentState->exit) {
+		game->currentState->exit(game);
 	}
-}
-
-void drawDead(GameState *state) {
-
-}
-
-void drawGame(GameState *state) {
-	BeginDrawing();
-
-	switch (state->scene) {
-		case STATE_MENU:
-			drawMenu(state);
-			break;
-		case STATE_PLAYING:
-			drawPlaying(state);
-			break;
-		case STATE_DEAD:
-			drawDead(state);
-			break;
+	game->currentState = game->states[newState];
+	if (game->currentState->entry) {
+		game->currentState->entry(game);
 	}
-
-	EndDrawing();
 }
 
 int main() {
-	GameState state = {
-		.screenWidth = 800,
-		.screenHeight = 450,
-		.scene = STATE_MENU,
-		.nextScene = -1
+	Game game = {
+		.width = 800, .height = 600,
+		.currentState = NULL,
+		.nextState = -1,
 	};
 
-	InitWindow(state.screenWidth, state.screenHeight, "Breakout");
+	const char *menuOptions[] = { "Play", "Quit" };
+	MenuData menuData = {
+		.selectedOption = 0,
+		.optionCount = 2,
+		.options = menuOptions,
+	};
+	State menuState = { STATE_MENU,    menuEntry, menuExit, menuUpdate, menuDraw, &menuData};
+	game.states[STATE_MENU] = &menuState;
+
+	PlayingData playingData = {
+		.hasStarted = false,
+		.paddleX = game.width/2. - PADDLE_WIDTH/2.,
+		.ballVel = { 0, 0 },
+		.ballPos = { game.width/2., game.height - PADDLE_Y_OFFSET - PADDLE_HEIGHT - BALL_RADIUS - 4 }
+	};
+	State playingState = { STATE_PLAYING, playingEntry, playingExit, playingUpdate, playingDraw, &playingData};
+	game.states[STATE_PLAYING] = &playingState;
+
+	DeadData deadData;
+	State deadState = (State){ STATE_DEAD, deadEntry, deadExit, deadUpdate, deadDraw, &deadData};
+	game.states[STATE_DEAD] = &deadState;
+
+
+	changeState(&game, STATE_MENU);
+
+	InitWindow(game.width, game.height, "Breakout");
 	SetTargetFPS(60);
 
 	while (!WindowShouldClose()) {
-		state.delta = GetFrameTime();
-		updateGame(&state);
-		drawGame(&state);
+		game.delta = GetFrameTime();
 
-		if (state.nextScene != -1) {
-			state.scene = state.nextScene;
-			state.nextScene = -1;
+		if (game.currentState->update) game.currentState->update(&game);
 
-			free(state.sceneData);
-			state.sceneData = NULL;
+		BeginDrawing();
+		if (game.currentState->draw)   game.currentState->draw(&game);
+		EndDrawing();
+
+		if (game.nextState != -1) {
+			changeState(&game, game.nextState);
+			game.nextState = -1;
 		}
 	}
 
