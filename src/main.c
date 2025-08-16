@@ -1,6 +1,7 @@
 #include <raylib.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 typedef enum {
 	STATE_MENU,
@@ -26,11 +27,24 @@ typedef struct {
 	const char **options;
 } MenuData;
 
+#define BLOCK_ROWS 5
+#define BLOCK_COLS 10
+#define BLOCK_PADDING 4
+
+typedef struct {
+	Vector2 pos;
+	Vector2 size;
+	bool active;
+} Block;
+
 typedef struct {
 	bool hasStarted;
-	float paddleX;
+	Vector2 paddlePos;
 	Vector2 ballPos;
 	Vector2 ballVel;
+
+	int blockCount;
+	Block blocks[BLOCK_ROWS * BLOCK_COLS];
 } PlayingData;
 
 typedef struct {
@@ -63,7 +77,8 @@ void menuUpdate(Game *game) {
 				game->nextState=STATE_PLAYING;
 				break;
 			case 1:
-				exit(0);
+				CloseWindow();
+				return;
 		}
 	}
 }
@@ -94,7 +109,7 @@ void menuDraw(Game *game) {
 
 const int PADDLE_WIDTH = 96;
 const int PADDLE_HEIGHT = 16;
-const int PADDLE_SPEED = 200;
+const int PADDLE_SPEED = 300;
 const int PADDLE_Y_OFFSET = 16;
 const int BALL_RADIUS = 8;
 const int BALL_SPEED = 300;
@@ -102,11 +117,36 @@ const int BALL_SPEED = 300;
 void playingEntry(Game *game) {
 	PlayingData *data = game->currentState->data;
 	data->hasStarted = false;
-	data->paddleX = game->width/2. - PADDLE_WIDTH/2.;
+	data->paddlePos = (Vector2){game->width/2. - PADDLE_WIDTH/2., game->height-PADDLE_Y_OFFSET-PADDLE_HEIGHT};
 	data->ballVel = (Vector2){ 0, 0 };
 	data->ballPos = (Vector2){ game->width/2., game->height - PADDLE_Y_OFFSET - PADDLE_HEIGHT - BALL_RADIUS - 4 };
+
+	int blockWidth  = (game->width  - (BLOCK_COLS+1)   * BLOCK_PADDING) / BLOCK_COLS;
+	int blockHeight = (game->height/3 - (BLOCK_ROWS+1) * BLOCK_PADDING) / BLOCK_ROWS;
+
+	data->blockCount = 0;
+	for (int row = 0; row < BLOCK_ROWS; row++) {
+		for (int col = 0; col < BLOCK_COLS; col++) {
+			Block *b = &data->blocks[data->blockCount++];
+			b->pos.x = BLOCK_PADDING + col * (blockWidth  + BLOCK_PADDING);
+			b->pos.y = BLOCK_PADDING + row * (blockHeight + BLOCK_PADDING);
+
+			b->size.x = blockWidth;
+			b->size.y = blockHeight;
+
+			b->active = true;
+		}
+	}
 }
 void playingExit(Game *game) {}
+
+bool aab(Vector2 aPos, Vector2 aSize, Vector2 bPos, Vector2 bSize) {
+	return
+		aPos.x+aSize.x > bPos.x &&
+		aPos.x-aSize.x < bPos.x + bSize.x &&
+		aPos.y+aSize.y > bPos.y &&
+		aPos.y-aSize.y < bPos.y + bSize.y;
+}
 
 void playingUpdate(Game *game) {
 	PlayingData *data = game->currentState->data;
@@ -123,12 +163,12 @@ void playingUpdate(Game *game) {
 	if (IsKeyDown(KEY_LEFT))  movement -= 1;
 	if (IsKeyDown(KEY_RIGHT)) movement += 1;
 
-	data->paddleX += movement * PADDLE_SPEED * game->delta;
+	data->paddlePos.x += movement * PADDLE_SPEED * game->delta;
 
 	const int LEFT_LIMIT  = 8;
 	const int RIGHT_LIMIT = game->width-8-PADDLE_WIDTH;
-	if (data->paddleX < LEFT_LIMIT)  data->paddleX = LEFT_LIMIT;
-	if (data->paddleX > RIGHT_LIMIT) data->paddleX = RIGHT_LIMIT; 
+	if (data->paddlePos.x < LEFT_LIMIT)  data->paddlePos.x = LEFT_LIMIT;
+	if (data->paddlePos.x > RIGHT_LIMIT) data->paddlePos.x = RIGHT_LIMIT; 
 
 	data->ballPos.x += data->ballVel.x * BALL_SPEED * game->delta;
 	data->ballPos.y += data->ballVel.y * BALL_SPEED * game->delta;
@@ -150,6 +190,50 @@ void playingUpdate(Game *game) {
 		data->ballPos.y = game->height-BALL_RADIUS;
 		data->ballVel.y*=-1;
 	}
+
+	if (aab(data->ballPos, (Vector2){BALL_RADIUS, BALL_RADIUS}, data->paddlePos, (Vector2){PADDLE_WIDTH, PADDLE_HEIGHT})) {
+		float deltaX = fabs(data->ballPos.x - data->paddlePos.x + PADDLE_WIDTH/2.);
+		float deltaY = fabs(data->ballPos.y - data->paddlePos.y + PADDLE_HEIGHT/2.);
+
+		if (deltaX > deltaY) {
+			if (data->ballVel.y > 0) data->ballPos.y = data->paddlePos.y - BALL_RADIUS;
+			else data->ballPos.y = data->paddlePos.y + PADDLE_HEIGHT + BALL_RADIUS;
+			data->ballVel.y *= -1;
+		} else {
+			if (data->ballVel.x > 0) data->ballPos.x = data->paddlePos.x - BALL_RADIUS;
+			else data->ballPos.x = data->paddlePos.x + PADDLE_WIDTH + BALL_RADIUS;
+			data->ballVel.x *= -1;
+		}
+	}
+
+	for (int i = 0; i < data->blockCount; i++) {
+		Block *block = &data->blocks[i];
+		if (!block->active) continue;
+		if (!aab(data->ballPos, (Vector2){BALL_RADIUS, BALL_RADIUS}, block->pos, block->size)) continue;
+
+		float overlapLeft  = fabs((data->ballPos.x + BALL_RADIUS) - block->pos.x);
+		float overlapRight = fabs((block->pos.x + block->size.x) - (data->ballPos.x - BALL_RADIUS));
+
+		float overlapTop    = fabs((data->ballPos.y + BALL_RADIUS) - block->pos.y);
+		float overlapBottom = fabs((block->pos.y + block->size.y) - (data->ballPos.y - BALL_RADIUS));
+
+		float minOverlap = fmin(fmin(overlapLeft, overlapRight), fmin(overlapTop, overlapBottom));
+
+		if 			  (minOverlap == overlapLeft) {
+			data->ballPos.x = block->pos.x - BALL_RADIUS;
+			data->ballVel.x *= -1;
+		} else if (minOverlap == overlapRight) {
+			data->ballPos.x = block->pos.x + block->size.x + BALL_RADIUS;
+			data->ballVel.x *= -1;
+		} else if (minOverlap == overlapTop) {
+			data->ballPos.y = block->pos.y - BALL_RADIUS;
+			data->ballVel.y *= -1;
+		} else if (minOverlap == overlapBottom) {
+			data->ballPos.y = block->pos.y + block->size.y + BALL_RADIUS;
+			data->ballVel.y *= -1;
+		}
+		block->active = false;
+	}
 }
 
 void playingDraw(Game *game) {
@@ -157,9 +241,15 @@ void playingDraw(Game *game) {
 
 	PlayingData *data = game->currentState->data;
 
-	DrawRectangle(data->paddleX, game->height-PADDLE_Y_OFFSET-PADDLE_HEIGHT, PADDLE_WIDTH, PADDLE_HEIGHT, GRAY);
+	DrawRectangle(data->paddlePos.x, data->paddlePos.y, PADDLE_WIDTH, PADDLE_HEIGHT, GRAY);
 
 	DrawEllipse(data->ballPos.x, data->ballPos.y, BALL_RADIUS, BALL_RADIUS, LIGHTGRAY);
+
+	for (int i = 0; i < data->blockCount; i++) {
+		Block block = data->blocks[i];
+		if (!block.active) continue;
+		DrawRectangle(block.pos.x, block.pos.y, block.size.x, block.size.y, GRAY);
+	}
 }
 
 void deadEntry(Game *game) {}
@@ -195,9 +285,6 @@ int main() {
 
 	PlayingData playingData = {
 		.hasStarted = false,
-		.paddleX = game.width/2. - PADDLE_WIDTH/2.,
-		.ballVel = { 0, 0 },
-		.ballPos = { game.width/2., game.height - PADDLE_Y_OFFSET - PADDLE_HEIGHT - BALL_RADIUS - 4 }
 	};
 	State playingState = { STATE_PLAYING, playingEntry, playingExit, playingUpdate, playingDraw, &playingData};
 	game.states[STATE_PLAYING] = &playingState;
