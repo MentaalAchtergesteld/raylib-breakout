@@ -39,6 +39,8 @@ typedef struct {
 
 typedef struct {
 	bool hasStarted;
+	int lifes;
+
 	Vector2 paddlePos;
 	Vector2 ballPos;
 	Vector2 ballVel;
@@ -114,12 +116,19 @@ const int PADDLE_Y_OFFSET = 16;
 const int BALL_RADIUS = 8;
 const int BALL_SPEED = 300;
 
+void resetBall(Game *game) {
+	PlayingData *data = game->currentState->data;
+	data->ballVel = (Vector2){ 0, 0 };
+	data->ballPos = (Vector2){ game->width/2., game->height - PADDLE_Y_OFFSET - PADDLE_HEIGHT - BALL_RADIUS - 4 };
+}
+
 void playingEntry(Game *game) {
 	PlayingData *data = game->currentState->data;
 	data->hasStarted = false;
+	data->lifes = 3;
+
 	data->paddlePos = (Vector2){game->width/2. - PADDLE_WIDTH/2., game->height-PADDLE_Y_OFFSET-PADDLE_HEIGHT};
-	data->ballVel = (Vector2){ 0, 0 };
-	data->ballPos = (Vector2){ game->width/2., game->height - PADDLE_Y_OFFSET - PADDLE_HEIGHT - BALL_RADIUS - 4 };
+	resetBall(game);
 
 	int blockWidth  = (game->width  - (BLOCK_COLS+1)   * BLOCK_PADDING) / BLOCK_COLS;
 	int blockHeight = (game->height/3 - (BLOCK_ROWS+1) * BLOCK_PADDING) / BLOCK_ROWS;
@@ -187,8 +196,13 @@ void playingUpdate(Game *game) {
 		data->ballVel.y*=-1;
 	}
 	else if (data->ballPos.y > game->height-BALL_RADIUS) {
-		data->ballPos.y = game->height-BALL_RADIUS;
-		data->ballVel.y*=-1;
+		data->lifes -= 1;
+		if (data->lifes <= 0) {
+			game->nextState = STATE_DEAD;
+			return;
+		};
+		resetBall(game);
+		data->hasStarted = false;
 	}
 
 	if (aab(data->ballPos, (Vector2){BALL_RADIUS, BALL_RADIUS}, data->paddlePos, (Vector2){PADDLE_WIDTH, PADDLE_HEIGHT})) {
@@ -241,6 +255,19 @@ void playingDraw(Game *game) {
 
 	PlayingData *data = game->currentState->data;
 
+	const int LIFE_RADIUS = 8;
+	const int LIFE_PADDING = 4;
+	const int LIFE_Y = game->height-LIFE_RADIUS-LIFE_PADDING;
+
+	for (int i = 0; i < data->lifes; i++) {
+		DrawEllipse(
+			LIFE_PADDING+LIFE_RADIUS+(i*(LIFE_RADIUS*2+LIFE_PADDING)),
+			LIFE_Y,
+			LIFE_RADIUS, LIFE_RADIUS,
+			GRAY
+		);
+	}
+
 	DrawRectangle(data->paddlePos.x, data->paddlePos.y, PADDLE_WIDTH, PADDLE_HEIGHT, GRAY);
 
 	DrawEllipse(data->ballPos.x, data->ballPos.y, BALL_RADIUS, BALL_RADIUS, LIGHTGRAY);
@@ -255,7 +282,11 @@ void playingDraw(Game *game) {
 void deadEntry(Game *game) {}
 void deadExit(Game *game) {}
 void deadUpdate(Game *game) {}
-void deadDraw(Game *game) {}
+
+void deadDraw(Game *game) {
+	ClearBackground(RAYWHITE);
+	DrawText("DEAD", 16, 16, 32, GRAY);
+}
 
 void changeState(Game *game, StateType newState) {
 	if (game->currentState && game->currentState->exit) {
